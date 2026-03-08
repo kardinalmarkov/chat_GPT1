@@ -50,7 +50,7 @@ init();
 
 async function init() {
   try {
-    const loaded = await loadAnyMap(['countries.geojson', 'world.geojson']);
+    const loaded = await loadAnyMap(['countries.geojson']);
     state.territories = loaded;
     state.territoryMap.clear();
     state.territories.forEach((territory) => state.territoryMap.set(territory.id, territory));
@@ -83,7 +83,7 @@ async function loadAnyMap(paths) {
     }
   }
 
-  // 100% fallback: встроенная география 12 стран в lon/lat
+  // fallback: встроенный GeoJSON на 12 стран, чтобы игра всегда запускалась.
   return buildTerritoriesFromGeoJson(buildBuiltinGeoJson12());
 }
 
@@ -427,7 +427,10 @@ function render() {
   }
 
   for (const territory of state.territories) drawTerritory(territory);
-  for (const territory of state.territories) drawDiceLabel(territory);
+  for (const territory of state.territories) {
+    drawDiceLabel(territory);
+    drawCountryName(territory);
+  }
 }
 
 function drawTerritory(territory) {
@@ -470,6 +473,22 @@ function drawDiceLabel(territory) {
   ctx.fillText(String(territory.diceCount), sx, sy + 1);
 }
 
+
+function drawCountryName(territory) {
+  const [x, y] = territory.center;
+  const sx = x * state.view.zoom + state.view.panX;
+  const sy = y * state.view.zoom + state.view.panY + 18;
+
+  ctx.fillStyle = '#d7e3ff';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  const short = territory.name
+    .replace('United States of America', 'USA')
+    .replace('United Kingdom', 'UK');
+  ctx.fillText(short, sx, sy);
+}
 function canvasToWorld(event) {
   const rect = canvas.getBoundingClientRect();
   const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
@@ -517,36 +536,27 @@ function runSelfTest() {
 }
 
 function buildBuiltinGeoJson12() {
-  const r = (name, west, south, east, north) => ({
+  const r = (name, points) => ({
     type: 'Feature',
     properties: { ADMIN: name },
-    geometry: {
-      type: 'Polygon',
-      coordinates: [[
-        [west, south],
-        [east, south],
-        [east, north],
-        [west, north],
-        [west, south]
-      ]]
-    }
+    geometry: { type: 'Polygon', coordinates: [points] }
   });
 
   return {
     type: 'FeatureCollection',
     features: [
-      r('United States of America', -125, 25, -66, 49),
-      r('Russia', 30, 48, 170, 72),
-      r('China', 73, 18, 135, 53),
-      r('India', 68, 8, 89, 35),
-      r('Pakistan', 60, 23, 77, 37),
-      r('France', -5, 42, 8, 51),
-      r('United Kingdom', -8, 50, 2, 59),
-      r('Israel', 34, 29, 36, 33),
-      r('North Korea', 124, 38, 131, 43),
-      r('Iran', 44, 25, 63, 40),
-      r('Germany', 6, 47, 15, 55),
-      r('Brazil', -74, -34, -34, 6)
+      r('United States of America', [[-124,32],[-124,42],[-122,48],[-111,49],[-103,49],[-95,49],[-88,48],[-83,46],[-75,45],[-67,44],[-69,41],[-74,40],[-77,36],[-81,31],[-90,29],[-98,27],[-106,30],[-114,32],[-124,32]]),
+      r('Russia', [[30,59],[35,64],[44,68],[55,70],[72,72],[92,73],[112,72],[130,69],[146,67],[160,65],[170,62],[160,57],[148,55],[136,54],[122,53],[106,55],[90,57],[74,59],[58,58],[45,57],[30,59]]),
+      r('China', [[74,18],[80,26],[86,31],[94,34],[102,38],[112,42],[122,45],[132,47],[134,42],[128,36],[121,31],[113,24],[106,21],[98,20],[90,22],[84,24],[79,23],[74,18]]),
+      r('India', [[68,24],[73,28],[78,32],[83,34],[88,30],[90,25],[89,21],[86,16],[82,9],[78,8],[74,12],[71,18],[68,24]]),
+      r('Pakistan', [[61,25],[64,29],[68,35],[73,36],[77,33],[75,29],[72,26],[69,24],[65,24],[61,25]]),
+      r('France', [[-5,43],[-1,48],[2,50],[7,49],[8,46],[6,44],[3,43],[1,42],[-2,43],[-5,43]]),
+      r('United Kingdom', [[-7,50],[-6,54],[-5,57],[-2,59],[0,57],[1,54],[-1,52],[-3,50],[-5,50],[-7,50]]),
+      r('Israel', [[34.2,29.5],[34.4,31.0],[34.7,32.2],[35.2,33.0],[35.6,32.5],[35.4,31.3],[35.1,30.2],[34.8,29.6],[34.2,29.5]]),
+      r('North Korea', [[124,38],[126,40],[128,42],[130,43],[130.5,41.5],[129,40],[127.5,39],[126,38.3],[124,38]]),
+      r('Iran', [[44,26],[47,31],[50,35],[54,38],[59,39],[63,37],[62,32],[60,28],[56,26],[51,25],[47,25],[44,26]]),
+      r('Germany', [[6,47],[8,49],[10,51],[13,54],[15,53],[14,50],[13,48],[11,47],[9,47],[7,47],[6,47]]),
+      r('Brazil', [[-74,-33],[-69,-20],[-66,-10],[-60,-3],[-54,2],[-48,4],[-41,0],[-35,-6],[-38,-14],[-42,-20],[-46,-24],[-51,-29],[-58,-31],[-66,-32],[-74,-33]])
     ]
   };
 }
