@@ -26,20 +26,29 @@ init();
 
 async function init() {
   try {
-    // Порядок загрузки: сначала GeoJSON мира, затем локальный map.json как запасной вариант.
-    const source = await loadAnyMap(['countries.geojson', 'world.geojson', 'map.json']);
+    // 1) Локальные файлы на хостинге.
+    // 2) Ссылка на публичный GeoJSON как последний fallback.
+    const source = await loadAnyMap([
+      'countries.geojson',
+      'world.geojson',
+      'map.json',
+      'https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson'
+    ]);
+
     state.territories = source.territories;
     state.territories.forEach((territory) => state.territoryMap.set(territory.id, territory));
 
     attachEvents();
     endTurnBtn.disabled = false;
     selfTestBtn.disabled = false;
+
     addLog(`Карта загружена: ${source.label}. Территорий: ${state.territories.length}.`);
-    addLog('Старт игры. Первым ходит игрок.');
+    addLog('Старт. Ход игрока.');
     updateStatus();
     render();
   } catch (error) {
-    statusEl.textContent = `Ошибка загрузки карты: ${error.message}`;
+    statusEl.textContent = `Ошибка загрузки: ${error.message}`;
+    addLog('Не удалось загрузить карту. Проверьте наличие countries.geojson / world.geojson / map.json рядом с index.html.');
   }
 }
 
@@ -49,18 +58,22 @@ async function loadAnyMap(paths) {
       const response = await fetch(path, { cache: 'no-cache' });
       if (!response.ok) continue;
       const data = await response.json();
+
       if (data.type === 'FeatureCollection') {
         const territories = buildTerritoriesFromGeoJson(data);
-        if (territories.length > 5) return { territories, label: path };
+        if (territories.length > 10) return { territories, label: path };
       }
+
       if (Array.isArray(data.territories)) {
-        return { territories: buildTerritoriesFromJson(data), label: path };
+        const territories = buildTerritoriesFromJson(data);
+        if (territories.length > 0) return { territories, label: path };
       }
     } catch {
-      // Переходим к следующему варианту файла.
+      // Пробуем следующий источник.
     }
   }
-  throw new Error('Не найден map.json / countries.geojson / world.geojson');
+
+  throw new Error('не найдена карта');
 }
 
 function buildTerritoriesFromJson(data) {
@@ -69,16 +82,17 @@ function buildTerritoriesFromJson(data) {
     return {
       id: territory.id,
       points,
-      neighbors: territory.neighbors,
+      neighbors: Array.isArray(territory.neighbors) ? territory.neighbors : [],
       owner: index % 2,
       diceCount: 2 + Math.floor(Math.random() * 3),
-      center: polygonCenter(points)
+      center: polygonCenter(points),
+      name: `Территория ${territory.id}`
     };
   });
 }
 
 function buildTerritoriesFromGeoJson(geojson) {
-  const projected = projectGeoJsonToCircle(geojson);
+  const projected = projectGeoJsonUNStyle(geojson);
   createAutoNeighbors(projected, 4);
 
   return projected.map((territory, index) => ({
@@ -89,16 +103,15 @@ function buildTerritoriesFromGeoJson(geojson) {
   }));
 }
 
-function projectGeoJsonToCircle(geojson) {
+function projectGeoJsonUNStyle(geojson) {
   const w = canvas.width;
   const h = canvas.height;
   const cx = w / 2;
-  const cy = h / 2 + 10;
-  const r = Math.min(w, h) * 0.42;
-  state.worldCircle = { cx, cy, r };
+  const cy = h / 2 + 20;
+  const r = Math.min(w, h) * 0.43;
+  const maxSouthLat = -60; // как в эмблеме ООН
 
-  const lat0 = degToRad(18);
-  const lon0 = degToRad(10);
+  state.worldCircle = { cx, cy, r };
 
   const territories = [];
   let idCounter = 1;
@@ -107,25 +120,27 @@ function projectGeoJsonToCircle(geojson) {
     const geometry = feature.geometry;
     if (!geometry) continue;
 
-    const rings = [];
-    if (geometry.type === 'Polygon') rings.push(...geometry.coordinates);
-    if (geometry.type === 'MultiPolygon') {
-      for (const poly of geometry.coordinates) rings.push(...poly);
-    }
+    const candidateRings = flattenGeometryRings(geometry);
 
     let best = null;
-    for (const ring of rings) {
-      const points = [];
-      const stride = Math.max(1, Math.floor(ring.length / 28));
+    for (const ring of candidateRings) {
+      const filtered = ring.filter((coord) => coord[1] >= maxSouthLat);
+      if (filtered.length < 4) continue;
 
-      for (let i = 0; i < ring.length; i += stride) {
-        const [lon, lat] = ring[i];
-        const p = orthographicProject(lat, lon, lat0, lon0, cx, cy, r);
-        if (p) points.push(p);
+      const stride = Math.max(1, Math.floor(filtered.length / 40));
+      const projectedPoints = [];
+
+      for (let i = 0; i < filtered.length; i += stride) {
+        const [lon, lat] = filtered[i];
+        const p = azimuthalEquidistantUN(lat, lon, cx, cy, r);
+        if (p) projectedPoints.push(p);
       }
 
-      if (points.length >= 4 && (!best || points.length > best.length)) {
-        best = points;
+      if (projectedPoints.length >= 4) {
+        const clean = dedupeSequentialPoints(projectedPoints);
+        if (clean.length >= 4 && (!best || polygonArea(clean) > polygonArea(best))) {
+          best = clean;
+        }
       }
     }
 
@@ -142,38 +157,56 @@ function projectGeoJsonToCircle(geojson) {
   return territories;
 }
 
-function orthographicProject(latDeg, lonDeg, lat0, lon0, cx, cy, r) {
+function flattenGeometryRings(geometry) {
+  if (geometry.type === 'Polygon') return geometry.coordinates;
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates.flat();
+  return [];
+}
+
+function azimuthalEquidistantUN(latDeg, lonDeg, cx, cy, radius) {
+  // Азимутальная равнопромежуточная проекция с центром в Северном полюсе.
+  // Это база для карт, похожих на эмблему ООН.
   const lat = degToRad(latDeg);
   const lon = degToRad(lonDeg);
-  const dLon = lon - lon0;
+  const lon0 = 0; // Гринвич внизу, в духе UN-проекции
 
-  const sinLat = Math.sin(lat);
-  const cosLat = Math.cos(lat);
-  const sinLat0 = Math.sin(lat0);
-  const cosLat0 = Math.cos(lat0);
+  const rho = radius * (Math.PI / 2 - lat) / (Math.PI / 2 - degToRad(-60));
+  if (!Number.isFinite(rho)) return null;
 
-  const cosC = sinLat0 * sinLat + cosLat0 * cosLat * Math.cos(dLon);
-  if (cosC <= 0) return null;
+  const theta = lon - lon0;
+  const x = cx + rho * Math.sin(theta);
+  const y = cy + rho * Math.cos(theta);
 
-  const x = cx + r * cosLat * Math.sin(dLon);
-  const y = cy - r * (cosLat0 * sinLat - sinLat0 * cosLat * Math.cos(dLon));
   return [x, y];
+}
+
+function dedupeSequentialPoints(points) {
+  const out = [];
+  for (const p of points) {
+    const prev = out[out.length - 1];
+    if (!prev || distance(prev, p) > 0.75) out.push(p);
+  }
+  return out;
 }
 
 function createAutoNeighbors(territories, k) {
   const centers = territories.map((t) => polygonCenter(t.points));
+  const boxes = territories.map((t) => bboxOfPolygon(t.points));
 
   for (let i = 0; i < territories.length; i++) {
-    const dist = [];
+    const ranked = [];
     for (let j = 0; j < territories.length; j++) {
       if (i === j) continue;
-      dist.push({ j, d: distance(centers[i], centers[j]) });
+      const centerDist = distance(centers[i], centers[j]);
+      const boxDist = bboxDistance(boxes[i], boxes[j]);
+      const score = centerDist + boxDist * 0.85;
+      ranked.push({ j, score });
     }
-    dist.sort((a, b) => a.d - b.d);
 
-    for (const item of dist.slice(0, k)) {
+    ranked.sort((a, b) => a.score - b.score);
+    for (const candidate of ranked.slice(0, k)) {
       const a = territories[i];
-      const b = territories[item.j];
+      const b = territories[candidate.j];
       if (!a.neighbors.includes(b.id)) a.neighbors.push(b.id);
       if (!b.neighbors.includes(a.id)) b.neighbors.push(a.id);
     }
@@ -198,7 +231,7 @@ function attachEvents() {
 function onWheelZoom(event) {
   event.preventDefault();
   const factor = event.deltaY < 0 ? 1.1 : 0.9;
-  state.view.zoom = clamp(state.view.zoom * factor, 0.7, 2.8);
+  state.view.zoom = clamp(state.view.zoom * factor, 0.7, 3);
   render();
 }
 
@@ -265,7 +298,7 @@ function resolveCombat(attacker, defender) {
     defender.owner = attacker.owner;
     defender.diceCount = movingDice;
     attacker.diceCount = 1;
-    addLog(`${playerName(attacker.owner)} захватил #${defender.id} (броски ${attackerRoll} vs ${defenderRoll}).`);
+    addLog(`${playerName(attacker.owner)} захватил #${defender.id} (${attackerRoll} vs ${defenderRoll}).`);
   } else {
     attacker.diceCount = 1;
     addLog(`${playerName(defender.owner)} отбил атаку на #${defender.id} (${attackerRoll} vs ${defenderRoll}).`);
@@ -299,7 +332,7 @@ function applyReinforcement(playerId) {
     const target = owned[Math.floor(Math.random() * owned.length)];
     if (target) target.diceCount += 1;
   }
-  addLog(`${playerName(playerId)} получает подкрепление: +${bonus} кубиков.`);
+  addLog(`${playerName(playerId)} получает подкрепление: +${bonus}.`);
 }
 
 function largestConnectedRegionSize(playerId) {
@@ -308,6 +341,7 @@ function largestConnectedRegionSize(playerId) {
 
   for (const territory of state.territories) {
     if (territory.owner !== playerId || visited.has(territory.id)) continue;
+
     let size = 0;
     const stack = [territory.id];
     visited.add(territory.id);
@@ -346,11 +380,11 @@ async function runAiTurn() {
     const choice = options[Math.floor(Math.random() * options.length)];
     resolveCombat(choice.attacker, choice.defender);
     attacks += 1;
-    await sleep(350);
+    await sleep(320);
   }
 
   if (!state.gameOver) {
-    await sleep(200);
+    await sleep(160);
     endTurn();
   }
 
@@ -378,7 +412,7 @@ function checkGameOver() {
   const winner = [...owners][0];
   statusEl.textContent = `Игра окончена! Победитель: ${playerName(winner)}`;
   endTurnBtn.disabled = true;
-  addLog(`Игра окончена! ${playerName(winner)} контролирует весь мир.`);
+  addLog(`Игра окончена! ${playerName(winner)} контролирует карту.`);
 }
 
 function updateStatus() {
@@ -394,8 +428,14 @@ function render() {
 
   if (state.worldCircle) {
     ctx.beginPath();
-    ctx.arc(state.worldCircle.cx + state.view.panX, state.worldCircle.cy + state.view.panY, state.worldCircle.r * state.view.zoom, 0, Math.PI * 2);
-    ctx.fillStyle = '#071433';
+    ctx.arc(
+      state.worldCircle.cx * state.view.zoom + state.view.panX,
+      state.worldCircle.cy * state.view.zoom + state.view.panY,
+      state.worldCircle.r * state.view.zoom,
+      0,
+      Math.PI * 2
+    );
+    ctx.fillStyle = '#06163b';
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#2f4c89';
@@ -420,19 +460,19 @@ function drawTerritory(territory) {
   ctx.closePath();
 
   ctx.fillStyle = ownerStyle;
-  ctx.globalAlpha = selected ? 0.9 : 0.82;
+  ctx.globalAlpha = selected ? 0.88 : 0.8;
   ctx.fill();
   ctx.globalAlpha = 1;
 
   const selectable = state.currentPlayer === 0 && !state.gameOver && territory.owner === 0 && territory.diceCount > 1;
-  ctx.lineWidth = selected ? 3.8 : selectable ? 2.5 : 1;
+  ctx.lineWidth = selected ? 3.6 : selectable ? 2.4 : 1;
   ctx.strokeStyle = selected ? '#ffe066' : selectable ? '#bef264' : '#203458';
   ctx.stroke();
 
   if (state.selectedAttackerId && state.currentPlayer === 0) {
     const attacker = getSelectedAttacker();
     if (attacker && attacker.neighbors.includes(territory.id) && territory.owner !== 0) {
-      ctx.lineWidth = 2.4;
+      ctx.lineWidth = 2.2;
       ctx.strokeStyle = '#facc15';
       ctx.stroke();
     }
@@ -444,13 +484,14 @@ function drawDiceLabel(territory) {
   const sx = x * state.view.zoom + state.view.panX;
   const sy = y * state.view.zoom + state.view.panY;
 
+  const radius = state.view.zoom < 0.9 ? 9 : 11;
   ctx.beginPath();
-  ctx.arc(sx, sy, 12, 0, Math.PI * 2);
+  ctx.arc(sx, sy, radius, 0, Math.PI * 2);
   ctx.fillStyle = '#0b1b44';
   ctx.fill();
 
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 16px sans-serif';
+  ctx.font = state.view.zoom < 0.9 ? 'bold 13px sans-serif' : 'bold 15px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(String(territory.diceCount), sx, sy + 1);
@@ -494,21 +535,52 @@ function getSelectedAttacker() {
 
 function runSelfTest() {
   const hasTerritories = state.territories.length > 0;
-  const allHaveNeighbors = state.territories.every((t) => t.neighbors.length > 0);
-  const allHavePoints = state.territories.every((t) => t.points.length >= 3);
+  const allHaveNeighbors = state.territories.every((territory) => territory.neighbors.length > 0);
+  const allHavePoints = state.territories.every((territory) => territory.points.length >= 3);
+  const twoPlayers = new Set(state.territories.map((territory) => territory.owner)).size === 2;
 
-  if (hasTerritories && allHaveNeighbors && allHavePoints) {
-    addLog('Проверка ОК: карта загружена, у территорий есть точки и соседи.');
-    alert('Проверка ОК ✅\nИгра готова к запуску.');
+  if (hasTerritories && allHaveNeighbors && allHavePoints && twoPlayers) {
+    addLog('Проверка ОК: карта, соседи и начальная расстановка валидны.');
+    alert('Проверка ОК ✅\nИгра работает корректно.');
   } else {
-    addLog('Проверка НЕ пройдена: карта повреждена или не загрузилась.');
-    alert('Проверка НЕ пройдена ❌\nПроверьте countries.geojson/map.json и консоль браузера.');
+    addLog('Проверка НЕ пройдена: структура карты некорректна.');
+    alert('Проверка НЕ пройдена ❌\nПроверьте files/URL карты и консоль браузера.');
   }
 }
 
 function polygonCenter(points) {
   const sum = points.reduce((acc, [x, y]) => [acc[0] + x, acc[1] + y], [0, 0]);
   return [sum[0] / points.length, sum[1] / points.length];
+}
+
+function polygonArea(points) {
+  let area = 0;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    area += (points[j][0] + points[i][0]) * (points[j][1] - points[i][1]);
+  }
+  return Math.abs(area * 0.5);
+}
+
+function bboxOfPolygon(points) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  return { minX, minY, maxX, maxY };
+}
+
+function bboxDistance(a, b) {
+  const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+  const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
+  return Math.hypot(dx, dy);
 }
 
 function rollDice(count) {
