@@ -22,6 +22,21 @@ const state = {
   worldCircle: null
 };
 
+// Встроенная аварийная карта: игра стартует даже если внешние файлы недоступны.
+const builtinMap = {
+  territories: [
+    { id: 1, points: [[90, 90], [350, 90], [330, 250], [100, 270]], neighbors: [2, 4] },
+    { id: 2, points: [[360, 90], [620, 100], [600, 250], [340, 250]], neighbors: [1, 3, 5] },
+    { id: 3, points: [[630, 110], [1060, 130], [1020, 280], [610, 250]], neighbors: [2, 6] },
+    { id: 4, points: [[100, 280], [330, 260], [350, 470], [80, 490]], neighbors: [1, 5, 7] },
+    { id: 5, points: [[350, 250], [600, 250], [620, 470], [350, 470]], neighbors: [2, 4, 6, 8] },
+    { id: 6, points: [[610, 250], [1020, 280], [1060, 500], [620, 470]], neighbors: [3, 5, 9] },
+    { id: 7, points: [[80, 500], [350, 470], [330, 700], [100, 700]], neighbors: [4, 8] },
+    { id: 8, points: [[350, 470], [620, 470], [600, 700], [330, 700]], neighbors: [5, 7, 9] },
+    { id: 9, points: [[620, 470], [1060, 500], [1080, 710], [600, 700]], neighbors: [6, 8] }
+  ]
+};
+
 init();
 
 async function init() {
@@ -55,7 +70,8 @@ async function init() {
 async function loadAnyMap(paths) {
   for (const path of paths) {
     try {
-      const response = await fetch(path, { cache: 'no-cache' });
+      // Таймаут защищает от зависания загрузки на внешнем URL.
+      const response = await fetchWithTimeout(path, 4500);
       if (!response.ok) continue;
       const data = await response.json();
 
@@ -73,7 +89,21 @@ async function loadAnyMap(paths) {
     }
   }
 
-  throw new Error('не найдена карта');
+  // Полный fallback: стартуем на встроенной карте.
+  return {
+    territories: buildTerritoriesFromJson(builtinMap),
+    label: 'встроенная fallback-карта'
+  };
+}
+
+function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  return fetch(url, {
+    cache: 'no-cache',
+    signal: controller.signal
+  }).finally(() => clearTimeout(timer));
 }
 
 function buildTerritoriesFromJson(data) {
