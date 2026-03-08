@@ -10,6 +10,30 @@ const players = [
   { id: 1, name: 'ИИ', color: '#ff4d4f' }
 ];
 
+const SELECTED_COUNTRIES = [
+  'United States of America',
+  'Russia',
+  'China',
+  'India',
+  'Pakistan',
+  'France',
+  'United Kingdom',
+  'Israel',
+  'North Korea',
+  'Iran',
+  'Germany',
+  'Brazil'
+];
+
+const COUNTRY_ALIASES = {
+  'Russian Federation': 'Russia',
+  'Dem. Rep. Korea': 'North Korea',
+  'Korea, North': 'North Korea',
+  'Iran (Islamic Republic of)': 'Iran',
+  'Iran, Islamic Republic of': 'Iran',
+  'United States': 'United States of America'
+};
+
 const state = {
   territories: [],
   territoryMap: new Map(),
@@ -22,221 +46,178 @@ const state = {
   worldCircle: null
 };
 
-// Встроенная аварийная карта: игра стартует даже если внешние файлы недоступны.
-const builtinMap = {
-  territories: [
-    { id: 1, points: [[90, 90], [350, 90], [330, 250], [100, 270]], neighbors: [2, 4] },
-    { id: 2, points: [[360, 90], [620, 100], [600, 250], [340, 250]], neighbors: [1, 3, 5] },
-    { id: 3, points: [[630, 110], [1060, 130], [1020, 280], [610, 250]], neighbors: [2, 6] },
-    { id: 4, points: [[100, 280], [330, 260], [350, 470], [80, 490]], neighbors: [1, 5, 7] },
-    { id: 5, points: [[350, 250], [600, 250], [620, 470], [350, 470]], neighbors: [2, 4, 6, 8] },
-    { id: 6, points: [[610, 250], [1020, 280], [1060, 500], [620, 470]], neighbors: [3, 5, 9] },
-    { id: 7, points: [[80, 500], [350, 470], [330, 700], [100, 700]], neighbors: [4, 8] },
-    { id: 8, points: [[350, 470], [620, 470], [600, 700], [330, 700]], neighbors: [5, 7, 9] },
-    { id: 9, points: [[620, 470], [1060, 500], [1080, 710], [600, 700]], neighbors: [6, 8] }
-  ]
-};
-
 init();
 
 async function init() {
   try {
-    // 1) Локальные файлы на хостинге.
-    // 2) Ссылка на публичный GeoJSON как последний fallback.
-    const source = await loadAnyMap([
-      'countries.geojson',
-      'world.geojson',
-      'map.json',
-      'https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson'
-    ]);
-
-    state.territories = source.territories;
+    const loaded = await loadAnyMap(['countries.geojson', 'world.geojson']);
+    state.territories = loaded;
+    state.territoryMap.clear();
     state.territories.forEach((territory) => state.territoryMap.set(territory.id, territory));
 
     attachEvents();
     endTurnBtn.disabled = false;
     selfTestBtn.disabled = false;
-
-    addLog(`Карта загружена: ${source.label}. Территорий: ${state.territories.length}.`);
-    addLog('Старт. Ход игрока.');
+    addLog('Карта загружена: 12 стран (ядерные + крупные).');
+    addLog('Старт игры. Ваш ход.');
     updateStatus();
     render();
   } catch (error) {
-    statusEl.textContent = `Ошибка загрузки: ${error.message}`;
-    addLog('Не удалось загрузить карту. Проверьте наличие countries.geojson / world.geojson / map.json рядом с index.html.');
+    statusEl.textContent = `Ошибка: ${error.message}`;
+    addLog('Ошибка загрузки карты. Откройте консоль браузера для деталей.');
   }
 }
 
 async function loadAnyMap(paths) {
   for (const path of paths) {
     try {
-      // Таймаут защищает от зависания загрузки на внешнем URL.
-      const response = await fetchWithTimeout(path, 4500);
+      const response = await fetchWithTimeout(path, 4000);
       if (!response.ok) continue;
       const data = await response.json();
-
       if (data.type === 'FeatureCollection') {
         const territories = buildTerritoriesFromGeoJson(data);
-        if (territories.length > 10) return { territories, label: path };
-      }
-
-      if (Array.isArray(data.territories)) {
-        const territories = buildTerritoriesFromJson(data);
-        if (territories.length > 0) return { territories, label: path };
+        if (territories.length === 12) return territories;
       }
     } catch {
-      // Пробуем следующий источник.
+      // пробуем следующий источник
     }
   }
 
-  // Полный fallback: стартуем на встроенной карте.
-  return {
-    territories: buildTerritoriesFromJson(builtinMap),
-    label: 'встроенная fallback-карта'
-  };
+  // 100% fallback: встроенная география 12 стран в lon/lat
+  return buildTerritoriesFromGeoJson(buildBuiltinGeoJson12());
 }
 
 function fetchWithTimeout(url, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  return fetch(url, {
-    cache: 'no-cache',
-    signal: controller.signal
-  }).finally(() => clearTimeout(timer));
-}
-
-function buildTerritoriesFromJson(data) {
-  return data.territories.map((territory, index) => {
-    const points = territory.points;
-    return {
-      id: territory.id,
-      points,
-      neighbors: Array.isArray(territory.neighbors) ? territory.neighbors : [],
-      owner: index % 2,
-      diceCount: 2 + Math.floor(Math.random() * 3),
-      center: polygonCenter(points),
-      name: `Территория ${territory.id}`
-    };
-  });
+  return fetch(url, { cache: 'no-cache', signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 function buildTerritoriesFromGeoJson(geojson) {
-  const projected = projectGeoJsonUNStyle(geojson);
-  createAutoNeighbors(projected, 4);
+  const selected = selectWantedFeatures(geojson.features || []);
+  const projected = selected
+    .map((feature, index) => {
+      const points = projectFeatureToUNPolygon(feature);
+      if (!points || points.length < 3) return null;
+      return {
+        id: index + 1,
+        name: normalizeCountryName(feature.properties?.ADMIN || feature.properties?.name || `Страна ${index + 1}`),
+        points,
+        neighbors: [],
+        owner: index % 2,
+        diceCount: 3
+      };
+    })
+    .filter(Boolean);
 
-  return projected.map((territory, index) => ({
-    ...territory,
-    owner: index % 2,
-    diceCount: 2 + Math.floor(Math.random() * 3),
-    center: polygonCenter(territory.points)
-  }));
+  createAutoNeighbors(projected, 3);
+
+  projected.forEach((territory) => {
+    territory.center = polygonCenter(territory.points);
+    territory.diceCount = 2 + Math.floor(Math.random() * 3);
+  });
+
+  return projected;
 }
 
-function projectGeoJsonUNStyle(geojson) {
-  const w = canvas.width;
-  const h = canvas.height;
-  const cx = w / 2;
-  const cy = h / 2 + 20;
-  const r = Math.min(w, h) * 0.43;
-  const maxSouthLat = -60; // как в эмблеме ООН
+function selectWantedFeatures(features) {
+  const normalizedWanted = new Set(SELECTED_COUNTRIES.map((name) => normalizeCountryName(name)));
+  const selected = [];
 
-  state.worldCircle = { cx, cy, r };
-
-  const territories = [];
-  let idCounter = 1;
-
-  for (const feature of geojson.features || []) {
-    const geometry = feature.geometry;
-    if (!geometry) continue;
-
-    const candidateRings = flattenGeometryRings(geometry);
-
-    let best = null;
-    for (const ring of candidateRings) {
-      const filtered = ring.filter((coord) => coord[1] >= maxSouthLat);
-      if (filtered.length < 4) continue;
-
-      const stride = Math.max(1, Math.floor(filtered.length / 40));
-      const projectedPoints = [];
-
-      for (let i = 0; i < filtered.length; i += stride) {
-        const [lon, lat] = filtered[i];
-        const p = azimuthalEquidistantUN(lat, lon, cx, cy, r);
-        if (p) projectedPoints.push(p);
-      }
-
-      if (projectedPoints.length >= 4) {
-        const clean = dedupeSequentialPoints(projectedPoints);
-        if (clean.length >= 4 && (!best || polygonArea(clean) > polygonArea(best))) {
-          best = clean;
-        }
-      }
-    }
-
-    if (!best) continue;
-
-    territories.push({
-      id: idCounter++,
-      points: best,
-      neighbors: [],
-      name: feature.properties?.ADMIN || feature.properties?.name || `T${idCounter}`
-    });
+  for (const feature of features) {
+    const raw = feature.properties?.ADMIN || feature.properties?.name;
+    const normalized = normalizeCountryName(raw || '');
+    if (normalizedWanted.has(normalized)) selected.push(feature);
   }
 
-  return territories;
+  // если чего-то не нашли, дозаполняем первыми странами, но до 12
+  if (selected.length < 12) {
+    for (const feature of features) {
+      if (selected.length >= 12) break;
+      if (!selected.includes(feature)) selected.push(feature);
+    }
+  }
+
+  return selected.slice(0, 12);
+}
+
+function normalizeCountryName(name) {
+  return COUNTRY_ALIASES[name] || name;
+}
+
+function projectFeatureToUNPolygon(feature) {
+  const rings = flattenGeometryRings(feature.geometry);
+  if (!rings.length) return null;
+
+  let best = null;
+  for (const ring of rings) {
+    const cleaned = ring.filter((coord) => Array.isArray(coord) && coord.length >= 2);
+    if (cleaned.length < 4) continue;
+
+    const stride = Math.max(1, Math.floor(cleaned.length / 50));
+    const points = [];
+
+    for (let i = 0; i < cleaned.length; i += stride) {
+      const [lon, lat] = cleaned[i];
+      const p = azimuthalEquidistantUN(lat, lon);
+      if (p) points.push(p);
+    }
+
+    const deduped = dedupeSequentialPoints(points);
+    if (deduped.length >= 3 && (!best || polygonArea(deduped) > polygonArea(best))) {
+      best = deduped;
+    }
+  }
+
+  return best;
+}
+
+function azimuthalEquidistantUN(latDeg, lonDeg) {
+  // Азимутальная равнопромежуточная, центр: Северный полюс (стиль карт ООН).
+  const lat = degToRad(latDeg);
+  const lon = degToRad(lonDeg);
+  const maxSouth = degToRad(-60);
+  if (lat < maxSouth) return null;
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2 + 20;
+  const radius = Math.min(canvas.width, canvas.height) * 0.43;
+  state.worldCircle = { cx, cy, r: radius };
+
+  const rho = radius * (Math.PI / 2 - lat) / (Math.PI / 2 - maxSouth);
+  const theta = lon;
+
+  return [cx + rho * Math.sin(theta), cy + rho * Math.cos(theta)];
 }
 
 function flattenGeometryRings(geometry) {
-  if (geometry.type === 'Polygon') return geometry.coordinates;
-  if (geometry.type === 'MultiPolygon') return geometry.coordinates.flat();
+  if (!geometry) return [];
+  if (geometry.type === 'Polygon') return geometry.coordinates || [];
+  if (geometry.type === 'MultiPolygon') return (geometry.coordinates || []).flat();
   return [];
-}
-
-function azimuthalEquidistantUN(latDeg, lonDeg, cx, cy, radius) {
-  // Азимутальная равнопромежуточная проекция с центром в Северном полюсе.
-  // Это база для карт, похожих на эмблему ООН.
-  const lat = degToRad(latDeg);
-  const lon = degToRad(lonDeg);
-  const lon0 = 0; // Гринвич внизу, в духе UN-проекции
-
-  const rho = radius * (Math.PI / 2 - lat) / (Math.PI / 2 - degToRad(-60));
-  if (!Number.isFinite(rho)) return null;
-
-  const theta = lon - lon0;
-  const x = cx + rho * Math.sin(theta);
-  const y = cy + rho * Math.cos(theta);
-
-  return [x, y];
 }
 
 function dedupeSequentialPoints(points) {
   const out = [];
   for (const p of points) {
     const prev = out[out.length - 1];
-    if (!prev || distance(prev, p) > 0.75) out.push(p);
+    if (!prev || distance(prev, p) > 1) out.push(p);
   }
   return out;
 }
 
 function createAutoNeighbors(territories, k) {
   const centers = territories.map((t) => polygonCenter(t.points));
-  const boxes = territories.map((t) => bboxOfPolygon(t.points));
-
   for (let i = 0; i < territories.length; i++) {
-    const ranked = [];
+    const nearest = [];
     for (let j = 0; j < territories.length; j++) {
       if (i === j) continue;
-      const centerDist = distance(centers[i], centers[j]);
-      const boxDist = bboxDistance(boxes[i], boxes[j]);
-      const score = centerDist + boxDist * 0.85;
-      ranked.push({ j, score });
+      nearest.push({ id: territories[j].id, d: distance(centers[i], centers[j]) });
     }
-
-    ranked.sort((a, b) => a.score - b.score);
-    for (const candidate of ranked.slice(0, k)) {
+    nearest.sort((a, b) => a.d - b.d);
+    for (const n of nearest.slice(0, k)) {
       const a = territories[i];
-      const b = territories[candidate.j];
+      const b = territories.find((t) => t.id === n.id);
       if (!a.neighbors.includes(b.id)) a.neighbors.push(b.id);
       if (!b.neighbors.includes(a.id)) b.neighbors.push(a.id);
     }
@@ -260,8 +241,7 @@ function attachEvents() {
 
 function onWheelZoom(event) {
   event.preventDefault();
-  const factor = event.deltaY < 0 ? 1.1 : 0.9;
-  state.view.zoom = clamp(state.view.zoom * factor, 0.7, 3);
+  state.view.zoom = clamp(state.view.zoom * (event.deltaY < 0 ? 1.08 : 0.92), 0.7, 2.5);
   render();
 }
 
@@ -272,11 +252,9 @@ function onMouseDown(event) {
 
 function onMouseMove(event) {
   if (!state.drag) return;
-  const dx = event.clientX - state.drag.x;
-  const dy = event.clientY - state.drag.y;
+  state.view.panX += event.clientX - state.drag.x;
+  state.view.panY += event.clientY - state.drag.y;
   state.drag = { x: event.clientX, y: event.clientY };
-  state.view.panX += dx;
-  state.view.panY += dy;
   render();
 }
 
@@ -299,15 +277,9 @@ function onCanvasClick(event) {
 
   const attacker = getSelectedAttacker();
   if (!attacker) return;
-
-  if (clicked.owner === 0) {
-    state.selectedAttackerId = clicked.diceCount > 1 ? clicked.id : null;
-    render();
-    return;
-  }
-
+  if (clicked.owner === 0) return;
   if (!attacker.neighbors.includes(clicked.id)) {
-    addLog('Можно атаковать только соседнюю территорию.');
+    addLog('Атаковать можно только соседа.');
     return;
   }
 
@@ -315,23 +287,17 @@ function onCanvasClick(event) {
 }
 
 function resolveCombat(attacker, defender) {
-  if (attacker.owner !== state.currentPlayer || attacker.diceCount <= 1 || defender.owner === attacker.owner) {
-    state.selectedAttackerId = null;
-    return;
-  }
-
   const attackerRoll = rollDice(attacker.diceCount);
   const defenderRoll = rollDice(defender.diceCount);
 
   if (attackerRoll > defenderRoll) {
-    const movingDice = attacker.diceCount - 1;
     defender.owner = attacker.owner;
-    defender.diceCount = movingDice;
+    defender.diceCount = attacker.diceCount - 1;
     attacker.diceCount = 1;
-    addLog(`${playerName(attacker.owner)} захватил #${defender.id} (${attackerRoll} vs ${defenderRoll}).`);
+    addLog(`${playerName(attacker.owner)} захватил ${defender.name} (${attackerRoll} vs ${defenderRoll}).`);
   } else {
     attacker.diceCount = 1;
-    addLog(`${playerName(defender.owner)} отбил атаку на #${defender.id} (${attackerRoll} vs ${defenderRoll}).`);
+    addLog(`${playerName(defender.owner)} отбил атаку на ${defender.name} (${attackerRoll} vs ${defenderRoll}).`);
   }
 
   state.selectedAttackerId = null;
@@ -341,28 +307,23 @@ function resolveCombat(attacker, defender) {
 }
 
 function endTurn() {
-  if (state.gameOver) return;
-
   applyReinforcement(state.currentPlayer);
   state.currentPlayer = (state.currentPlayer + 1) % players.length;
   state.selectedAttackerId = null;
   updateStatus();
   render();
   checkGameOver();
-
   if (state.currentPlayer === 1 && !state.gameOver) runAiTurn();
 }
 
 function applyReinforcement(playerId) {
   const bonus = largestConnectedRegionSize(playerId);
-  if (bonus <= 0) return;
-
   const owned = state.territories.filter((territory) => territory.owner === playerId);
   for (let i = 0; i < bonus; i++) {
     const target = owned[Math.floor(Math.random() * owned.length)];
     if (target) target.diceCount += 1;
   }
-  addLog(`${playerName(playerId)} получает подкрепление: +${bonus}.`);
+  addLog(`${playerName(playerId)} получает +${bonus} подкрепления.`);
 }
 
 function largestConnectedRegionSize(playerId) {
@@ -371,7 +332,6 @@ function largestConnectedRegionSize(playerId) {
 
   for (const territory of state.territories) {
     if (territory.owner !== playerId || visited.has(territory.id)) continue;
-
     let size = 0;
     const stack = [territory.id];
     visited.add(territory.id);
@@ -380,15 +340,14 @@ function largestConnectedRegionSize(playerId) {
       const id = stack.pop();
       size += 1;
       const current = state.territoryMap.get(id);
-      for (const neighborId of current.neighbors) {
-        const neighbor = state.territoryMap.get(neighborId);
-        if (neighbor && neighbor.owner === playerId && !visited.has(neighborId)) {
-          visited.add(neighborId);
-          stack.push(neighborId);
+      for (const nId of current.neighbors) {
+        const n = state.territoryMap.get(nId);
+        if (n && n.owner === playerId && !visited.has(nId)) {
+          visited.add(nId);
+          stack.push(nId);
         }
       }
     }
-
     largest = Math.max(largest, size);
   }
 
@@ -398,23 +357,20 @@ function largestConnectedRegionSize(playerId) {
 async function runAiTurn() {
   state.aiBusy = true;
   endTurnBtn.disabled = true;
-  addLog('Ход ИИ...');
 
   let attacks = 0;
-  const maxAttacks = 1 + Math.floor(Math.random() * 4);
-
-  while (!state.gameOver && attacks < maxAttacks) {
+  const maxAttacks = 1 + Math.floor(Math.random() * 3);
+  while (attacks < maxAttacks && !state.gameOver) {
     const options = aiAttackOptions();
     if (!options.length || Math.random() < 0.35) break;
-
     const choice = options[Math.floor(Math.random() * options.length)];
     resolveCombat(choice.attacker, choice.defender);
     attacks += 1;
-    await sleep(320);
+    await sleep(300);
   }
 
   if (!state.gameOver) {
-    await sleep(160);
+    await sleep(220);
     endTurn();
   }
 
@@ -426,9 +382,9 @@ function aiAttackOptions() {
   const options = [];
   for (const territory of state.territories) {
     if (territory.owner !== 1 || territory.diceCount <= 1) continue;
-    for (const neighborId of territory.neighbors) {
-      const neighbor = state.territoryMap.get(neighborId);
-      if (neighbor && neighbor.owner !== 1) options.push({ attacker: territory, defender: neighbor });
+    for (const nId of territory.neighbors) {
+      const n = state.territoryMap.get(nId);
+      if (n && n.owner !== 1) options.push({ attacker: territory, defender: n });
     }
   }
   return options;
@@ -437,20 +393,18 @@ function aiAttackOptions() {
 function checkGameOver() {
   const owners = new Set(state.territories.map((territory) => territory.owner));
   if (owners.size > 1) return;
-
   state.gameOver = true;
   const winner = [...owners][0];
-  statusEl.textContent = `Игра окончена! Победитель: ${playerName(winner)}`;
+  statusEl.textContent = `Игра окончена: ${playerName(winner)}`;
   endTurnBtn.disabled = true;
-  addLog(`Игра окончена! ${playerName(winner)} контролирует карту.`);
 }
 
 function updateStatus() {
   if (state.gameOver) return;
-  const player = players[state.currentPlayer];
-  statusEl.textContent = `Ход: ${player.name}`;
-  statusEl.style.background = player.id === 0 ? '#14532d' : '#7f1d1d';
-  endTurnBtn.disabled = player.id !== 0 || state.aiBusy;
+  const p = players[state.currentPlayer];
+  statusEl.textContent = `Ход: ${p.name}`;
+  statusEl.style.background = p.id === 0 ? '#14532d' : '#7f1d1d';
+  endTurnBtn.disabled = p.id !== 0 || state.aiBusy;
 }
 
 function render() {
@@ -465,10 +419,10 @@ function render() {
       0,
       Math.PI * 2
     );
-    ctx.fillStyle = '#06163b';
+    ctx.fillStyle = '#071a44';
     ctx.fill();
-    ctx.lineWidth = 2;
     ctx.strokeStyle = '#2f4c89';
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
 
@@ -478,35 +432,25 @@ function render() {
 
 function drawTerritory(territory) {
   const selected = territory.id === state.selectedAttackerId;
-  const ownerStyle = players[territory.owner]?.color || '#777';
 
   ctx.beginPath();
-  territory.points.forEach(([x, y], index) => {
+  territory.points.forEach(([x, y], i) => {
     const sx = x * state.view.zoom + state.view.panX;
     const sy = y * state.view.zoom + state.view.panY;
-    if (index === 0) ctx.moveTo(sx, sy);
+    if (i === 0) ctx.moveTo(sx, sy);
     else ctx.lineTo(sx, sy);
   });
   ctx.closePath();
 
-  ctx.fillStyle = ownerStyle;
-  ctx.globalAlpha = selected ? 0.88 : 0.8;
+  ctx.fillStyle = players[territory.owner].color;
+  ctx.globalAlpha = selected ? 0.9 : 0.82;
   ctx.fill();
   ctx.globalAlpha = 1;
 
-  const selectable = state.currentPlayer === 0 && !state.gameOver && territory.owner === 0 && territory.diceCount > 1;
-  ctx.lineWidth = selected ? 3.6 : selectable ? 2.4 : 1;
+  const selectable = state.currentPlayer === 0 && territory.owner === 0 && territory.diceCount > 1;
   ctx.strokeStyle = selected ? '#ffe066' : selectable ? '#bef264' : '#203458';
+  ctx.lineWidth = selected ? 3.5 : selectable ? 2.2 : 1;
   ctx.stroke();
-
-  if (state.selectedAttackerId && state.currentPlayer === 0) {
-    const attacker = getSelectedAttacker();
-    if (attacker && attacker.neighbors.includes(territory.id) && territory.owner !== 0) {
-      ctx.lineWidth = 2.2;
-      ctx.strokeStyle = '#facc15';
-      ctx.stroke();
-    }
-  }
 }
 
 function drawDiceLabel(territory) {
@@ -514,14 +458,13 @@ function drawDiceLabel(territory) {
   const sx = x * state.view.zoom + state.view.panX;
   const sy = y * state.view.zoom + state.view.panY;
 
-  const radius = state.view.zoom < 0.9 ? 9 : 11;
   ctx.beginPath();
-  ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+  ctx.arc(sx, sy, 12, 0, Math.PI * 2);
   ctx.fillStyle = '#0b1b44';
   ctx.fill();
 
   ctx.fillStyle = '#fff';
-  ctx.font = state.view.zoom < 0.9 ? 'bold 13px sans-serif' : 'bold 15px sans-serif';
+  ctx.font = 'bold 15px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(String(territory.diceCount), sx, sy + 1);
@@ -531,10 +474,7 @@ function canvasToWorld(event) {
   const rect = canvas.getBoundingClientRect();
   const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
   const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
-  return {
-    worldX: (x - state.view.panX) / state.view.zoom,
-    worldY: (y - state.view.panY) / state.view.zoom
-  };
+  return { worldX: (x - state.view.panX) / state.view.zoom, worldY: (y - state.view.panY) / state.view.zoom };
 }
 
 function territoryAtPoint(x, y) {
@@ -547,14 +487,12 @@ function territoryAtPoint(x, y) {
 function pointInPolygon(point, polygon) {
   const [x, y] = point;
   let inside = false;
-
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const [xi, yi] = polygon[i];
     const [xj, yj] = polygon[j];
-    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + Number.EPSILON) + xi;
-    if (intersects) inside = !inside;
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + Number.EPSILON) + xi;
+    if (intersect) inside = !inside;
   }
-
   return inside;
 }
 
@@ -564,18 +502,53 @@ function getSelectedAttacker() {
 }
 
 function runSelfTest() {
-  const hasTerritories = state.territories.length > 0;
-  const allHaveNeighbors = state.territories.every((territory) => territory.neighbors.length > 0);
-  const allHavePoints = state.territories.every((territory) => territory.points.length >= 3);
-  const twoPlayers = new Set(state.territories.map((territory) => territory.owner)).size === 2;
+  const ok =
+    state.territories.length === 12 &&
+    state.territories.every((territory) => territory.points.length >= 3) &&
+    state.territories.every((territory) => territory.neighbors.length > 0);
 
-  if (hasTerritories && allHaveNeighbors && allHavePoints && twoPlayers) {
-    addLog('Проверка ОК: карта, соседи и начальная расстановка валидны.');
-    alert('Проверка ОК ✅\nИгра работает корректно.');
+  if (ok) {
+    addLog('Проверка ОК: карта (12 стран) и соседи валидны.');
+    alert('Проверка ОК ✅');
   } else {
-    addLog('Проверка НЕ пройдена: структура карты некорректна.');
-    alert('Проверка НЕ пройдена ❌\nПроверьте files/URL карты и консоль браузера.');
+    addLog('Проверка НЕ пройдена: карта загружена некорректно.');
+    alert('Проверка НЕ пройдена ❌');
   }
+}
+
+function buildBuiltinGeoJson12() {
+  const r = (name, west, south, east, north) => ({
+    type: 'Feature',
+    properties: { ADMIN: name },
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [west, south],
+        [east, south],
+        [east, north],
+        [west, north],
+        [west, south]
+      ]]
+    }
+  });
+
+  return {
+    type: 'FeatureCollection',
+    features: [
+      r('United States of America', -125, 25, -66, 49),
+      r('Russia', 30, 48, 170, 72),
+      r('China', 73, 18, 135, 53),
+      r('India', 68, 8, 89, 35),
+      r('Pakistan', 60, 23, 77, 37),
+      r('France', -5, 42, 8, 51),
+      r('United Kingdom', -8, 50, 2, 59),
+      r('Israel', 34, 29, 36, 33),
+      r('North Korea', 124, 38, 131, 43),
+      r('Iran', 44, 25, 63, 40),
+      r('Germany', 6, 47, 15, 55),
+      r('Brazil', -74, -34, -34, 6)
+    ]
+  };
 }
 
 function polygonCenter(points) {
@@ -586,31 +559,9 @@ function polygonCenter(points) {
 function polygonArea(points) {
   let area = 0;
   for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-    area += (points[j][0] + points[i][0]) * (points[j][1] - points[i][1]);
+    area += points[j][0] * points[i][1] - points[i][0] * points[j][1];
   }
-  return Math.abs(area * 0.5);
-}
-
-function bboxOfPolygon(points) {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (const [x, y] of points) {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  }
-
-  return { minX, minY, maxX, maxY };
-}
-
-function bboxDistance(a, b) {
-  const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
-  const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
-  return Math.hypot(dx, dy);
+  return Math.abs(area / 2);
 }
 
 function rollDice(count) {
@@ -628,10 +579,7 @@ function addLog(message) {
   entry.className = 'log-entry';
   entry.textContent = message;
   logEl.prepend(entry);
-
-  while (logEl.children.length > 70) {
-    logEl.removeChild(logEl.lastChild);
-  }
+  while (logEl.children.length > 60) logEl.removeChild(logEl.lastChild);
 }
 
 function distance(a, b) {
