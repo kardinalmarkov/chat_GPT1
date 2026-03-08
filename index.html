@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mini Dice Wars</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hud">
+      <h1>Mini Dice Wars</h1>
+      <div id="current-player">Current: -</div>
+      <button id="end-turn">End Turn</button>
+      <div id="status">Loading map...</div>
+    </header>
+    <canvas id="game-canvas" width="900" height="620" aria-label="Dice Wars game board"></canvas>
+    <p class="hint">Click one of your territories (with 2+ dice), then click an adjacent enemy territory to attack. Wheel = zoom, drag empty space = pan.</p>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

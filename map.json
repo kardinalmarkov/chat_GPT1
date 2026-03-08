@@ -1,0 +1,15 @@
+{
+  "territories": [
+    { "id": 1, "points": [[70,70],[270,70],[250,220],[80,230]], "neighbors": [2,4], "owner": 0, "diceCount": 3 },
+    { "id": 2, "points": [[280,70],[500,80],[490,230],[260,220]], "neighbors": [1,3,5], "owner": 1, "diceCount": 2 },
+    { "id": 3, "points": [[520,90],[820,90],[810,230],[500,230]], "neighbors": [2,6], "owner": 0, "diceCount": 3 },
+
+    { "id": 4, "points": [[80,250],[250,240],[260,390],[70,410]], "neighbors": [1,5,7], "owner": 1, "diceCount": 2 },
+    { "id": 5, "points": [[260,240],[500,240],[500,390],[260,390]], "neighbors": [2,4,6,8], "owner": 0, "diceCount": 2 },
+    { "id": 6, "points": [[510,240],[810,240],[830,390],[500,390]], "neighbors": [3,5,9], "owner": 1, "diceCount": 2 },
+
+    { "id": 7, "points": [[70,430],[260,410],[250,560],[90,560]], "neighbors": [4,8], "owner": 0, "diceCount": 4 },
+    { "id": 8, "points": [[260,400],[510,400],[500,560],[250,560]], "neighbors": [5,7,9], "owner": 1, "diceCount": 3 },
+    { "id": 9, "points": [[520,400],[830,400],[810,560],[500,560]], "neighbors": [6,8], "owner": 0, "diceCount": 3 }
+  ]
+}
