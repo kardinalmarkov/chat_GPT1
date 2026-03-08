@@ -97,7 +97,7 @@ function buildTerritoriesFromGeoJson(geojson) {
   const selected = selectWantedFeatures(geojson.features || []);
   const projected = selected
     .map((feature, index) => {
-      const points = projectFeatureToUNPolygon(feature);
+      const points = projectFeatureToWorldPolygon(feature);
       if (!points || points.length < 3) return null;
       return {
         id: index + 1,
@@ -145,7 +145,7 @@ function normalizeCountryName(name) {
   return COUNTRY_ALIASES[name] || name;
 }
 
-function projectFeatureToUNPolygon(feature) {
+function projectFeatureToWorldPolygon(feature) {
   const rings = flattenGeometryRings(feature.geometry);
   if (!rings.length) return null;
 
@@ -159,7 +159,7 @@ function projectFeatureToUNPolygon(feature) {
 
     for (let i = 0; i < cleaned.length; i += stride) {
       const [lon, lat] = cleaned[i];
-      const p = azimuthalEquidistantUN(lat, lon);
+      const p = projectLonLatToWorld(lat, lon);
       if (p) points.push(p);
     }
 
@@ -172,22 +172,20 @@ function projectFeatureToUNPolygon(feature) {
   return best;
 }
 
-function azimuthalEquidistantUN(latDeg, lonDeg) {
-  // Азимутальная равнопромежуточная, центр: Северный полюс (стиль карт ООН).
-  const lat = degToRad(latDeg);
-  const lon = degToRad(lonDeg);
-  const maxSouth = degToRad(-60);
-  if (lat < maxSouth) return null;
+function projectLonLatToWorld(latDeg, lonDeg) {
+  // Обычная карта мира: эквидистантная цилиндрическая проекция (plate carrée).
+  const lon = ((lonDeg + 180) % 360 + 360) % 360 - 180;
+  const lat = Math.max(-85, Math.min(85, latDeg));
 
-  const cx = canvas.width / 2;
-  const cy = canvas.height / 2 + 20;
-  const radius = Math.min(canvas.width, canvas.height) * 0.43;
-  state.worldCircle = { cx, cy, r: radius };
+  const marginX = 70;
+  const marginY = 60;
+  const mapW = canvas.width - marginX * 2;
+  const mapH = canvas.height - marginY * 2;
 
-  const rho = radius * (Math.PI / 2 - lat) / (Math.PI / 2 - maxSouth);
-  const theta = lon;
+  const x = marginX + ((lon + 180) / 360) * mapW;
+  const y = marginY + ((90 - lat) / 180) * mapH;
 
-  return [cx + rho * Math.sin(theta), cy + rho * Math.cos(theta)];
+  return [x, y];
 }
 
 function flattenGeometryRings(geometry) {
@@ -410,26 +408,49 @@ function updateStatus() {
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (state.worldCircle) {
-    ctx.beginPath();
-    ctx.arc(
-      state.worldCircle.cx * state.view.zoom + state.view.panX,
-      state.worldCircle.cy * state.view.zoom + state.view.panY,
-      state.worldCircle.r * state.view.zoom,
-      0,
-      Math.PI * 2
-    );
-    ctx.fillStyle = '#071a44';
-    ctx.fill();
-    ctx.strokeStyle = '#2f4c89';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
+  drawWorldBackground();
 
   for (const territory of state.territories) drawTerritory(territory);
   for (const territory of state.territories) {
     drawDiceLabel(territory);
     drawCountryName(territory);
+  }
+}
+
+
+function drawWorldBackground() {
+  const marginX = 70;
+  const marginY = 60;
+  const mapW = canvas.width - marginX * 2;
+  const mapH = canvas.height - marginY * 2;
+
+  const x = marginX * state.view.zoom + state.view.panX;
+  const y = marginY * state.view.zoom + state.view.panY;
+  const w = mapW * state.view.zoom;
+  const h = mapH * state.view.zoom;
+
+  ctx.fillStyle = '#071a44';
+  ctx.fillRect(x, y, w, h);
+
+  ctx.strokeStyle = '#2f4c89';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.strokeStyle = 'rgba(122, 156, 218, 0.35)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 6; i++) {
+    const yy = y + (h / 6) * i;
+    ctx.beginPath();
+    ctx.moveTo(x, yy);
+    ctx.lineTo(x + w, yy);
+    ctx.stroke();
+  }
+  for (let i = 1; i < 12; i++) {
+    const xx = x + (w / 12) * i;
+    ctx.beginPath();
+    ctx.moveTo(xx, y);
+    ctx.lineTo(xx, y + h);
+    ctx.stroke();
   }
 }
 
