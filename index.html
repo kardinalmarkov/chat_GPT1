@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Мини Dice Wars</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hud">
+      <h1>Мини Dice Wars</h1>
+      <div id="status" class="badge">Загрузка карты…</div>
+      <button id="endTurnBtn" disabled>Завершить ход</button>
+      <button id="selfTestBtn" disabled>Проверка</button>
+    </header>
+
+    <p id="hint" class="hint">
+      Правила: выберите свою территорию (2+ кубика), затем соседнюю вражескую — это атака. За ход можно атаковать много раз. В конце хода нажмите «Завершить ход». Подкрепление = размер вашей крупнейшей связной области.
+    </p>
+
+    <canvas id="gameCanvas" width="1200" height="760"></canvas>
+
+    <section id="log" aria-live="polite"></section>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

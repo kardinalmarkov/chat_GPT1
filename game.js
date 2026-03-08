@@ -1,0 +1,549 @@
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const endTurnBtn = document.getElementById('endTurnBtn');
+const selfTestBtn = document.getElementById('selfTestBtn');
+
+const players = [
+  { id: 0, name: 'Игрок', color: '#34c759' },
+  { id: 1, name: 'ИИ', color: '#ff4d4f' }
+];
+
+const state = {
+  territories: [],
+  territoryMap: new Map(),
+  currentPlayer: 0,
+  selectedAttackerId: null,
+  gameOver: false,
+  aiBusy: false,
+  drag: null,
+  view: { zoom: 1, panX: 0, panY: 0 },
+  worldCircle: null
+};
+
+init();
+
+async function init() {
+  try {
+    // Порядок загрузки: сначала GeoJSON мира, затем локальный map.json как запасной вариант.
+    const source = await loadAnyMap(['countries.geojson', 'world.geojson', 'map.json']);
+    state.territories = source.territories;
+    state.territories.forEach((territory) => state.territoryMap.set(territory.id, territory));
+
+    attachEvents();
+    endTurnBtn.disabled = false;
+    selfTestBtn.disabled = false;
+    addLog(`Карта загружена: ${source.label}. Территорий: ${state.territories.length}.`);
+    addLog('Старт игры. Первым ходит игрок.');
+    updateStatus();
+    render();
+  } catch (error) {
+    statusEl.textContent = `Ошибка загрузки карты: ${error.message}`;
+  }
+}
+
+async function loadAnyMap(paths) {
+  for (const path of paths) {
+    try {
+      const response = await fetch(path, { cache: 'no-cache' });
+      if (!response.ok) continue;
+      const data = await response.json();
+      if (data.type === 'FeatureCollection') {
+        const territories = buildTerritoriesFromGeoJson(data);
+        if (territories.length > 5) return { territories, label: path };
+      }
+      if (Array.isArray(data.territories)) {
+        return { territories: buildTerritoriesFromJson(data), label: path };
+      }
+    } catch {
+      // Переходим к следующему варианту файла.
+    }
+  }
+  throw new Error('Не найден map.json / countries.geojson / world.geojson');
+}
+
+function buildTerritoriesFromJson(data) {
+  return data.territories.map((territory, index) => {
+    const points = territory.points;
+    return {
+      id: territory.id,
+      points,
+      neighbors: territory.neighbors,
+      owner: index % 2,
+      diceCount: 2 + Math.floor(Math.random() * 3),
+      center: polygonCenter(points)
+    };
+  });
+}
+
+function buildTerritoriesFromGeoJson(geojson) {
+  const projected = projectGeoJsonToCircle(geojson);
+  createAutoNeighbors(projected, 4);
+
+  return projected.map((territory, index) => ({
+    ...territory,
+    owner: index % 2,
+    diceCount: 2 + Math.floor(Math.random() * 3),
+    center: polygonCenter(territory.points)
+  }));
+}
+
+function projectGeoJsonToCircle(geojson) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const cx = w / 2;
+  const cy = h / 2 + 10;
+  const r = Math.min(w, h) * 0.42;
+  state.worldCircle = { cx, cy, r };
+
+  const lat0 = degToRad(18);
+  const lon0 = degToRad(10);
+
+  const territories = [];
+  let idCounter = 1;
+
+  for (const feature of geojson.features || []) {
+    const geometry = feature.geometry;
+    if (!geometry) continue;
+
+    const rings = [];
+    if (geometry.type === 'Polygon') rings.push(...geometry.coordinates);
+    if (geometry.type === 'MultiPolygon') {
+      for (const poly of geometry.coordinates) rings.push(...poly);
+    }
+
+    let best = null;
+    for (const ring of rings) {
+      const points = [];
+      const stride = Math.max(1, Math.floor(ring.length / 28));
+
+      for (let i = 0; i < ring.length; i += stride) {
+        const [lon, lat] = ring[i];
+        const p = orthographicProject(lat, lon, lat0, lon0, cx, cy, r);
+        if (p) points.push(p);
+      }
+
+      if (points.length >= 4 && (!best || points.length > best.length)) {
+        best = points;
+      }
+    }
+
+    if (!best) continue;
+
+    territories.push({
+      id: idCounter++,
+      points: best,
+      neighbors: [],
+      name: feature.properties?.ADMIN || feature.properties?.name || `T${idCounter}`
+    });
+  }
+
+  return territories;
+}
+
+function orthographicProject(latDeg, lonDeg, lat0, lon0, cx, cy, r) {
+  const lat = degToRad(latDeg);
+  const lon = degToRad(lonDeg);
+  const dLon = lon - lon0;
+
+  const sinLat = Math.sin(lat);
+  const cosLat = Math.cos(lat);
+  const sinLat0 = Math.sin(lat0);
+  const cosLat0 = Math.cos(lat0);
+
+  const cosC = sinLat0 * sinLat + cosLat0 * cosLat * Math.cos(dLon);
+  if (cosC <= 0) return null;
+
+  const x = cx + r * cosLat * Math.sin(dLon);
+  const y = cy - r * (cosLat0 * sinLat - sinLat0 * cosLat * Math.cos(dLon));
+  return [x, y];
+}
+
+function createAutoNeighbors(territories, k) {
+  const centers = territories.map((t) => polygonCenter(t.points));
+
+  for (let i = 0; i < territories.length; i++) {
+    const dist = [];
+    for (let j = 0; j < territories.length; j++) {
+      if (i === j) continue;
+      dist.push({ j, d: distance(centers[i], centers[j]) });
+    }
+    dist.sort((a, b) => a.d - b.d);
+
+    for (const item of dist.slice(0, k)) {
+      const a = territories[i];
+      const b = territories[item.j];
+      if (!a.neighbors.includes(b.id)) a.neighbors.push(b.id);
+      if (!b.neighbors.includes(a.id)) b.neighbors.push(a.id);
+    }
+  }
+}
+
+function attachEvents() {
+  canvas.addEventListener('click', onCanvasClick);
+  canvas.addEventListener('wheel', onWheelZoom, { passive: false });
+  canvas.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+
+  endTurnBtn.addEventListener('click', () => {
+    if (state.currentPlayer !== 0 || state.gameOver || state.aiBusy) return;
+    endTurn();
+  });
+
+  selfTestBtn.addEventListener('click', runSelfTest);
+}
+
+function onWheelZoom(event) {
+  event.preventDefault();
+  const factor = event.deltaY < 0 ? 1.1 : 0.9;
+  state.view.zoom = clamp(state.view.zoom * factor, 0.7, 2.8);
+  render();
+}
+
+function onMouseDown(event) {
+  if (event.button !== 0) return;
+  state.drag = { x: event.clientX, y: event.clientY };
+}
+
+function onMouseMove(event) {
+  if (!state.drag) return;
+  const dx = event.clientX - state.drag.x;
+  const dy = event.clientY - state.drag.y;
+  state.drag = { x: event.clientX, y: event.clientY };
+  state.view.panX += dx;
+  state.view.panY += dy;
+  render();
+}
+
+function onMouseUp() {
+  state.drag = null;
+}
+
+function onCanvasClick(event) {
+  if (state.currentPlayer !== 0 || state.gameOver || state.aiBusy) return;
+
+  const { worldX, worldY } = canvasToWorld(event);
+  const clicked = territoryAtPoint(worldX, worldY);
+  if (!clicked) return;
+
+  if (clicked.owner === 0 && clicked.diceCount > 1) {
+    state.selectedAttackerId = clicked.id;
+    render();
+    return;
+  }
+
+  const attacker = getSelectedAttacker();
+  if (!attacker) return;
+
+  if (clicked.owner === 0) {
+    state.selectedAttackerId = clicked.diceCount > 1 ? clicked.id : null;
+    render();
+    return;
+  }
+
+  if (!attacker.neighbors.includes(clicked.id)) {
+    addLog('Можно атаковать только соседнюю территорию.');
+    return;
+  }
+
+  resolveCombat(attacker, clicked);
+}
+
+function resolveCombat(attacker, defender) {
+  if (attacker.owner !== state.currentPlayer || attacker.diceCount <= 1 || defender.owner === attacker.owner) {
+    state.selectedAttackerId = null;
+    return;
+  }
+
+  const attackerRoll = rollDice(attacker.diceCount);
+  const defenderRoll = rollDice(defender.diceCount);
+
+  if (attackerRoll > defenderRoll) {
+    const movingDice = attacker.diceCount - 1;
+    defender.owner = attacker.owner;
+    defender.diceCount = movingDice;
+    attacker.diceCount = 1;
+    addLog(`${playerName(attacker.owner)} захватил #${defender.id} (броски ${attackerRoll} vs ${defenderRoll}).`);
+  } else {
+    attacker.diceCount = 1;
+    addLog(`${playerName(defender.owner)} отбил атаку на #${defender.id} (${attackerRoll} vs ${defenderRoll}).`);
+  }
+
+  state.selectedAttackerId = null;
+  checkGameOver();
+  updateStatus();
+  render();
+}
+
+function endTurn() {
+  if (state.gameOver) return;
+
+  applyReinforcement(state.currentPlayer);
+  state.currentPlayer = (state.currentPlayer + 1) % players.length;
+  state.selectedAttackerId = null;
+  updateStatus();
+  render();
+  checkGameOver();
+
+  if (state.currentPlayer === 1 && !state.gameOver) runAiTurn();
+}
+
+function applyReinforcement(playerId) {
+  const bonus = largestConnectedRegionSize(playerId);
+  if (bonus <= 0) return;
+
+  const owned = state.territories.filter((territory) => territory.owner === playerId);
+  for (let i = 0; i < bonus; i++) {
+    const target = owned[Math.floor(Math.random() * owned.length)];
+    if (target) target.diceCount += 1;
+  }
+  addLog(`${playerName(playerId)} получает подкрепление: +${bonus} кубиков.`);
+}
+
+function largestConnectedRegionSize(playerId) {
+  const visited = new Set();
+  let largest = 0;
+
+  for (const territory of state.territories) {
+    if (territory.owner !== playerId || visited.has(territory.id)) continue;
+    let size = 0;
+    const stack = [territory.id];
+    visited.add(territory.id);
+
+    while (stack.length) {
+      const id = stack.pop();
+      size += 1;
+      const current = state.territoryMap.get(id);
+      for (const neighborId of current.neighbors) {
+        const neighbor = state.territoryMap.get(neighborId);
+        if (neighbor && neighbor.owner === playerId && !visited.has(neighborId)) {
+          visited.add(neighborId);
+          stack.push(neighborId);
+        }
+      }
+    }
+
+    largest = Math.max(largest, size);
+  }
+
+  return largest;
+}
+
+async function runAiTurn() {
+  state.aiBusy = true;
+  endTurnBtn.disabled = true;
+  addLog('Ход ИИ...');
+
+  let attacks = 0;
+  const maxAttacks = 1 + Math.floor(Math.random() * 4);
+
+  while (!state.gameOver && attacks < maxAttacks) {
+    const options = aiAttackOptions();
+    if (!options.length || Math.random() < 0.35) break;
+
+    const choice = options[Math.floor(Math.random() * options.length)];
+    resolveCombat(choice.attacker, choice.defender);
+    attacks += 1;
+    await sleep(350);
+  }
+
+  if (!state.gameOver) {
+    await sleep(200);
+    endTurn();
+  }
+
+  state.aiBusy = false;
+  endTurnBtn.disabled = state.currentPlayer !== 0 || state.gameOver;
+}
+
+function aiAttackOptions() {
+  const options = [];
+  for (const territory of state.territories) {
+    if (territory.owner !== 1 || territory.diceCount <= 1) continue;
+    for (const neighborId of territory.neighbors) {
+      const neighbor = state.territoryMap.get(neighborId);
+      if (neighbor && neighbor.owner !== 1) options.push({ attacker: territory, defender: neighbor });
+    }
+  }
+  return options;
+}
+
+function checkGameOver() {
+  const owners = new Set(state.territories.map((territory) => territory.owner));
+  if (owners.size > 1) return;
+
+  state.gameOver = true;
+  const winner = [...owners][0];
+  statusEl.textContent = `Игра окончена! Победитель: ${playerName(winner)}`;
+  endTurnBtn.disabled = true;
+  addLog(`Игра окончена! ${playerName(winner)} контролирует весь мир.`);
+}
+
+function updateStatus() {
+  if (state.gameOver) return;
+  const player = players[state.currentPlayer];
+  statusEl.textContent = `Ход: ${player.name}`;
+  statusEl.style.background = player.id === 0 ? '#14532d' : '#7f1d1d';
+  endTurnBtn.disabled = player.id !== 0 || state.aiBusy;
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (state.worldCircle) {
+    ctx.beginPath();
+    ctx.arc(state.worldCircle.cx + state.view.panX, state.worldCircle.cy + state.view.panY, state.worldCircle.r * state.view.zoom, 0, Math.PI * 2);
+    ctx.fillStyle = '#071433';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#2f4c89';
+    ctx.stroke();
+  }
+
+  for (const territory of state.territories) drawTerritory(territory);
+  for (const territory of state.territories) drawDiceLabel(territory);
+}
+
+function drawTerritory(territory) {
+  const selected = territory.id === state.selectedAttackerId;
+  const ownerStyle = players[territory.owner]?.color || '#777';
+
+  ctx.beginPath();
+  territory.points.forEach(([x, y], index) => {
+    const sx = x * state.view.zoom + state.view.panX;
+    const sy = y * state.view.zoom + state.view.panY;
+    if (index === 0) ctx.moveTo(sx, sy);
+    else ctx.lineTo(sx, sy);
+  });
+  ctx.closePath();
+
+  ctx.fillStyle = ownerStyle;
+  ctx.globalAlpha = selected ? 0.9 : 0.82;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  const selectable = state.currentPlayer === 0 && !state.gameOver && territory.owner === 0 && territory.diceCount > 1;
+  ctx.lineWidth = selected ? 3.8 : selectable ? 2.5 : 1;
+  ctx.strokeStyle = selected ? '#ffe066' : selectable ? '#bef264' : '#203458';
+  ctx.stroke();
+
+  if (state.selectedAttackerId && state.currentPlayer === 0) {
+    const attacker = getSelectedAttacker();
+    if (attacker && attacker.neighbors.includes(territory.id) && territory.owner !== 0) {
+      ctx.lineWidth = 2.4;
+      ctx.strokeStyle = '#facc15';
+      ctx.stroke();
+    }
+  }
+}
+
+function drawDiceLabel(territory) {
+  const [x, y] = territory.center;
+  const sx = x * state.view.zoom + state.view.panX;
+  const sy = y * state.view.zoom + state.view.panY;
+
+  ctx.beginPath();
+  ctx.arc(sx, sy, 12, 0, Math.PI * 2);
+  ctx.fillStyle = '#0b1b44';
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(territory.diceCount), sx, sy + 1);
+}
+
+function canvasToWorld(event) {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
+  const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
+  return {
+    worldX: (x - state.view.panX) / state.view.zoom,
+    worldY: (y - state.view.panY) / state.view.zoom
+  };
+}
+
+function territoryAtPoint(x, y) {
+  for (const territory of state.territories) {
+    if (pointInPolygon([x, y], territory.points)) return territory;
+  }
+  return null;
+}
+
+function pointInPolygon(point, polygon) {
+  const [x, y] = point;
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + Number.EPSILON) + xi;
+    if (intersects) inside = !inside;
+  }
+
+  return inside;
+}
+
+function getSelectedAttacker() {
+  if (state.selectedAttackerId == null) return null;
+  return state.territoryMap.get(state.selectedAttackerId) || null;
+}
+
+function runSelfTest() {
+  const hasTerritories = state.territories.length > 0;
+  const allHaveNeighbors = state.territories.every((t) => t.neighbors.length > 0);
+  const allHavePoints = state.territories.every((t) => t.points.length >= 3);
+
+  if (hasTerritories && allHaveNeighbors && allHavePoints) {
+    addLog('Проверка ОК: карта загружена, у территорий есть точки и соседи.');
+    alert('Проверка ОК ✅\nИгра готова к запуску.');
+  } else {
+    addLog('Проверка НЕ пройдена: карта повреждена или не загрузилась.');
+    alert('Проверка НЕ пройдена ❌\nПроверьте countries.geojson/map.json и консоль браузера.');
+  }
+}
+
+function polygonCenter(points) {
+  const sum = points.reduce((acc, [x, y]) => [acc[0] + x, acc[1] + y], [0, 0]);
+  return [sum[0] / points.length, sum[1] / points.length];
+}
+
+function rollDice(count) {
+  let sum = 0;
+  for (let i = 0; i < count; i++) sum += 1 + Math.floor(Math.random() * 6);
+  return sum;
+}
+
+function playerName(id) {
+  return players[id]?.name || `Игрок ${id}`;
+}
+
+function addLog(message) {
+  const entry = document.createElement('p');
+  entry.className = 'log-entry';
+  entry.textContent = message;
+  logEl.prepend(entry);
+
+  while (logEl.children.length > 70) {
+    logEl.removeChild(logEl.lastChild);
+  }
+}
+
+function distance(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function degToRad(value) {
+  return (value * Math.PI) / 180;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
