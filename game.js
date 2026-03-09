@@ -34,6 +34,33 @@ const COUNTRY_ALIASES = {
   'United States': 'United States of America'
 };
 
+
+// Непроходимый фон «остальные страны/континенты», чтобы карта выглядела полноценной.
+const BACKGROUND_LANDMASSES = [
+  // Северная Америка (без USA-территории игры)
+  [[-170, 12], [-160, 25], [-150, 45], [-140, 58], [-120, 68], [-95, 74], [-70, 68], [-55, 55], [-60, 35], [-80, 20], [-110, 14], [-145, 10], [-170, 12]],
+  // Южная Америка (кроме фокуса на Бразилии)
+  [[-82, 10], [-78, -5], [-74, -20], [-70, -35], [-66, -48], [-60, -54], [-50, -50], [-44, -34], [-48, -12], [-60, 2], [-72, 8], [-82, 10]],
+  // Африка
+  [[-18, 36], [-8, 35], [4, 32], [18, 27], [32, 19], [42, 8], [50, -10], [45, -28], [33, -35], [18, -34], [5, -28], [-4, -16], [-10, 0], [-15, 16], [-18, 36]],
+  // Европа (фон под игровыми UK/FR/DE)
+  [[-12, 35], [0, 43], [15, 49], [30, 55], [42, 60], [33, 66], [16, 66], [0, 60], [-8, 54], [-12, 45], [-12, 35]],
+  // Ближний Восток / Центральная Азия
+  [[34, 25], [46, 30], [58, 34], [72, 39], [82, 47], [70, 52], [52, 48], [40, 40], [34, 25]],
+  // Восточная Азия (без Китая/КНДР как игровых)
+  [[100, 6], [112, 12], [126, 20], [140, 28], [150, 37], [156, 50], [145, 58], [126, 52], [112, 42], [102, 30], [98, 16], [100, 6]],
+  // Австралия
+  [[112, -45], [128, -41], [142, -38], [152, -28], [151, -16], [138, -10], [122, -15], [114, -26], [112, -45]],
+  // Гренландия
+  [[-73, 58], [-58, 62], [-42, 68], [-28, 76], [-38, 83], [-56, 82], [-68, 75], [-73, 58]]
+];
+
+// Лёгкая стратегическая группировка (инфо-слой): неигровые маркеры.
+const STRATEGIC_GROUPS = [
+  { name: 'NATO/США базы', color: '#60a5fa', points: [[-157, 21], [-79, 25], [-22, 64], [10, 52], [36, 41], [44, 34], [129, 36]] },
+  { name: 'Партнёры США в АТР', color: '#34d399', points: [[121, 14], [139, 36], [151, -33]] }
+];
+
 const state = {
   territories: [],
   territoryMap: new Map(),
@@ -409,12 +436,15 @@ function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawWorldBackground();
+  drawBackgroundLandmasses();
 
   for (const territory of state.territories) drawTerritory(territory);
   for (const territory of state.territories) {
     drawDiceLabel(territory);
     drawCountryName(territory);
   }
+
+  drawStrategicOverlay();
 }
 
 
@@ -454,6 +484,67 @@ function drawWorldBackground() {
   }
 }
 
+
+
+function drawBackgroundLandmasses() {
+  ctx.fillStyle = 'rgba(125, 149, 186, 0.28)';
+  ctx.strokeStyle = 'rgba(154, 182, 224, 0.45)';
+  ctx.lineWidth = 1;
+
+  for (const poly of BACKGROUND_LANDMASSES) {
+    ctx.beginPath();
+    poly.forEach(([lon, lat], i) => {
+      const [x, y] = projectLonLatToWorld(lat, lon);
+      const sx = x * state.view.zoom + state.view.panX;
+      const sy = y * state.view.zoom + state.view.panY;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawStrategicOverlay() {
+  for (const group of STRATEGIC_GROUPS) {
+    for (const [lon, lat] of group.points) {
+      const [x, y] = projectLonLatToWorld(lat, lon);
+      const sx = x * state.view.zoom + state.view.panX;
+      const sy = y * state.view.zoom + state.view.panY;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = group.color;
+      ctx.fill();
+      ctx.strokeStyle = '#0b1226';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  // компактная легенда
+  const lx = 14;
+  const ly = 14;
+  const lw = 220;
+  const lh = 50;
+  ctx.fillStyle = 'rgba(8, 16, 36, 0.72)';
+  ctx.fillRect(lx, ly, lw, lh);
+  ctx.strokeStyle = 'rgba(120, 151, 206, 0.7)';
+  ctx.strokeRect(lx, ly, lw, lh);
+
+  STRATEGIC_GROUPS.forEach((g, idx) => {
+    const y = ly + 16 + idx * 18;
+    ctx.fillStyle = g.color;
+    ctx.beginPath();
+    ctx.arc(lx + 12, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#dbe8ff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(g.name, lx + 22, y);
+  });
+}
 function drawTerritory(territory) {
   const selected = territory.id === state.selectedAttackerId;
 
