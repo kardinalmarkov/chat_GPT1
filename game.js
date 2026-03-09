@@ -37,29 +37,63 @@ const COUNTRY_ALIASES = {
 
 // Непроходимый фон «остальные страны/континенты», чтобы карта выглядела полноценной.
 const BACKGROUND_LANDMASSES = [
-  // Северная Америка (без USA-территории игры)
-  [[-170, 12], [-160, 25], [-150, 45], [-140, 58], [-120, 68], [-95, 74], [-70, 68], [-55, 55], [-60, 35], [-80, 20], [-110, 14], [-145, 10], [-170, 12]],
-  // Южная Америка (кроме фокуса на Бразилии)
-  [[-82, 10], [-78, -5], [-74, -20], [-70, -35], [-66, -48], [-60, -54], [-50, -50], [-44, -34], [-48, -12], [-60, 2], [-72, 8], [-82, 10]],
-  // Африка
-  [[-18, 36], [-8, 35], [4, 32], [18, 27], [32, 19], [42, 8], [50, -10], [45, -28], [33, -35], [18, -34], [5, -28], [-4, -16], [-10, 0], [-15, 16], [-18, 36]],
-  // Европа (фон под игровыми UK/FR/DE)
-  [[-12, 35], [0, 43], [15, 49], [30, 55], [42, 60], [33, 66], [16, 66], [0, 60], [-8, 54], [-12, 45], [-12, 35]],
-  // Ближний Восток / Центральная Азия
-  [[34, 25], [46, 30], [58, 34], [72, 39], [82, 47], [70, 52], [52, 48], [40, 40], [34, 25]],
-  // Восточная Азия (без Китая/КНДР как игровых)
-  [[100, 6], [112, 12], [126, 20], [140, 28], [150, 37], [156, 50], [145, 58], [126, 52], [112, 42], [102, 30], [98, 16], [100, 6]],
-  // Австралия
-  [[112, -45], [128, -41], [142, -38], [152, -28], [151, -16], [138, -10], [122, -15], [114, -26], [112, -45]],
+  // Северная Америка
+  [[-168, 14], [-160, 22], [-154, 35], [-148, 50], [-140, 60], [-130, 66], [-120, 70], [-108, 72], [-95, 74], [-82, 72], [-68, 66], [-58, 57], [-60, 46], [-66, 35], [-75, 25], [-88, 18], [-104, 14], [-124, 11], [-146, 9], [-168, 14]],
+  // Центральная Америка
+  [[-98, 24], [-90, 23], [-84, 20], [-81, 16], [-79, 10], [-83, 8], [-88, 10], [-94, 16], [-98, 24]],
+  // Южная Америка
+  [[-82, 12], [-78, 5], [-76, -6], [-74, -16], [-70, -26], [-66, -36], [-60, -48], [-54, -54], [-47, -50], [-42, -39], [-38, -28], [-35, -15], [-38, -2], [-44, 6], [-54, 10], [-66, 10], [-74, 11], [-82, 12]],
   // Гренландия
-  [[-73, 58], [-58, 62], [-42, 68], [-28, 76], [-38, 83], [-56, 82], [-68, 75], [-73, 58]]
+  [[-73, 58], [-60, 62], [-48, 68], [-35, 76], [-43, 82], [-57, 83], [-68, 76], [-73, 58]],
+  // Африка
+  [[-18, 37], [-6, 36], [8, 34], [21, 30], [33, 24], [43, 13], [50, 3], [51, -10], [47, -20], [41, -30], [33, -35], [21, -35], [9, -30], [1, -20], [-7, -5], [-12, 10], [-17, 24], [-18, 37]],
+  // Европа
+  [[-11, 35], [-4, 43], [4, 49], [14, 54], [24, 58], [34, 62], [42, 64], [34, 70], [20, 71], [8, 68], [-2, 61], [-10, 52], [-11, 35]],
+  // Азия (основная масса)
+  [[32, 5], [46, 12], [64, 20], [82, 30], [98, 42], [114, 50], [132, 56], [150, 60], [168, 60], [174, 52], [172, 44], [160, 34], [146, 24], [130, 14], [114, 5], [98, 2], [80, 1], [62, 2], [48, 4], [32, 5]],
+  // Аравийский полуостров
+  [[34, 32], [42, 32], [49, 28], [56, 23], [52, 16], [45, 13], [40, 16], [35, 24], [34, 32]],
+  // Индостан
+  [[67, 24], [73, 28], [79, 30], [86, 27], [89, 20], [86, 12], [80, 7], [74, 8], [69, 16], [67, 24]],
+  // Юго-Восточная Азия острова
+  [[95, 6], [104, 7], [112, 5], [118, 0], [116, -6], [108, -8], [100, -6], [95, 1], [95, 6]],
+  // Япония/Корея блок
+  [[127, 30], [133, 34], [139, 38], [143, 43], [146, 39], [142, 34], [136, 31], [130, 30], [127, 30]],
+  // Австралия
+  [[112, -44], [125, -41], [138, -38], [151, -33], [154, -25], [153, -16], [145, -11], [133, -13], [121, -17], [114, -26], [112, -44]],
+  // Новая Зеландия
+  [[166, -47], [174, -45], [179, -40], [178, -35], [172, -36], [167, -41], [166, -47]],
+  // Антарктика (узкая полоса)
+  [[-180, -72], [-120, -70], [-60, -71], [0, -73], [60, -71], [120, -70], [180, -72], [180, -85], [-180, -85], [-180, -72]]
 ];
+
 
 // Лёгкая стратегическая группировка (инфо-слой): неигровые маркеры.
 const STRATEGIC_GROUPS = [
-  { name: 'NATO/США базы', color: '#60a5fa', points: [[-157, 21], [-79, 25], [-22, 64], [10, 52], [36, 41], [44, 34], [129, 36]] },
-  { name: 'Партнёры США в АТР', color: '#34d399', points: [[121, 14], [139, 36], [151, -33]] }
+  {
+    name: 'NATO/США/Британия базы',
+    color: '#60a5fa',
+    bases: [
+      { lon: -157.9, lat: 21.3, country: 'США (Гавайи)', title: 'Pearl Harbor', note: 'Тихоокеанский узел ВМС США' },
+      { lon: -79.9, lat: 9.4, country: 'Панама', title: 'Howard Area', note: 'Логистика/транзит в Атлантике и Тихом океане' },
+      { lon: -21.9, lat: 64.1, country: 'Исландия', title: 'Keflavik', note: 'Контроль североатлантических маршрутов' },
+      { lon: 14.5, lat: 35.9, country: 'Мальта/Центр Средиземноморья', title: 'Med Transit', note: 'Условный опорный морской район' },
+      { lon: 36.3, lat: 41.1, country: 'Турция', title: 'Incirlik region', note: 'Авиационный узел НАТО' },
+      { lon: 58.4, lat: 23.6, country: 'Оман', title: 'Duqm corridor', note: 'Маршрут Персидский залив — Индийский океан' },
+      { lon: 139.8, lat: 35.4, country: 'Япония', title: 'Yokosuka region', note: 'Ключевой узел США в АТР' }
+    ]
+  },
+  {
+    name: 'Партнёры США в АТР',
+    color: '#34d399',
+    bases: [
+      { lon: 121.0, lat: 14.6, country: 'Филиппины', title: 'Luzon hub', note: 'Партнёрский маршрут в Южно-Китайском море' },
+      { lon: 151.2, lat: -33.9, country: 'Австралия', title: 'Sydney support', note: 'Логистическая поддержка в южной части Тихого океана' },
+      { lon: 174.8, lat: -41.3, country: 'Новая Зеландия', title: 'Wellington partner', note: 'Тыловой тихоокеанский узел' }
+    ]
+  }
 ];
+
 
 const state = {
   territories: [],
@@ -70,7 +104,8 @@ const state = {
   aiBusy: false,
   drag: null,
   view: { zoom: 1, panX: 0, panY: 0 },
-  worldCircle: null
+  worldCircle: null,
+  hoveredBase: null
 };
 
 init();
@@ -276,11 +311,44 @@ function onMouseDown(event) {
 }
 
 function onMouseMove(event) {
-  if (!state.drag) return;
-  state.view.panX += event.clientX - state.drag.x;
-  state.view.panY += event.clientY - state.drag.y;
-  state.drag = { x: event.clientX, y: event.clientY };
-  render();
+  let changed = false;
+
+  if (state.drag) {
+    state.view.panX += event.clientX - state.drag.x;
+    state.view.panY += event.clientY - state.drag.y;
+    state.drag = { x: event.clientX, y: event.clientY };
+    changed = true;
+  }
+
+  const hovered = findHoveredBase(event);
+  const prev = state.hoveredBase?.title || null;
+  const next = hovered?.title || null;
+  if (prev !== next) {
+    state.hoveredBase = hovered;
+    changed = true;
+  }
+
+  if (changed) render();
+}
+
+
+function findHoveredBase(event) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = ((event.clientX - rect.left) / rect.width) * canvas.width;
+  const my = ((event.clientY - rect.top) / rect.height) * canvas.height;
+
+  for (const group of STRATEGIC_GROUPS) {
+    for (const base of group.bases) {
+      const [x, y] = projectLonLatToWorld(base.lat, base.lon);
+      const sx = x * state.view.zoom + state.view.panX;
+      const sy = y * state.view.zoom + state.view.panY;
+      if (Math.hypot(mx - sx, my - sy) <= 8) {
+        return { ...base, group: group.name, color: group.color, sx, sy };
+      }
+    }
+  }
+
+  return null;
 }
 
 function onMouseUp() {
@@ -508,12 +576,12 @@ function drawBackgroundLandmasses() {
 
 function drawStrategicOverlay() {
   for (const group of STRATEGIC_GROUPS) {
-    for (const [lon, lat] of group.points) {
-      const [x, y] = projectLonLatToWorld(lat, lon);
+    for (const base of group.bases) {
+      const [x, y] = projectLonLatToWorld(base.lat, base.lon);
       const sx = x * state.view.zoom + state.view.panX;
       const sy = y * state.view.zoom + state.view.panY;
       ctx.beginPath();
-      ctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
       ctx.fillStyle = group.color;
       ctx.fill();
       ctx.strokeStyle = '#0b1226';
@@ -522,10 +590,9 @@ function drawStrategicOverlay() {
     }
   }
 
-  // компактная легенда
   const lx = 14;
   const ly = 14;
-  const lw = 220;
+  const lw = 260;
   const lh = 50;
   ctx.fillStyle = 'rgba(8, 16, 36, 0.72)';
   ctx.fillRect(lx, ly, lw, lh);
@@ -544,7 +611,45 @@ function drawStrategicOverlay() {
     ctx.textBaseline = 'middle';
     ctx.fillText(g.name, lx + 22, y);
   });
+
+  if (state.hoveredBase) {
+    drawBaseTooltip(state.hoveredBase);
+  }
 }
+
+function drawBaseTooltip(base) {
+  const lines = [
+    `Группа: ${base.group}`,
+    `Точка: ${base.title}`,
+    `Страна: ${base.country}`,
+    `Роль: ${base.note}`
+  ];
+
+  ctx.font = '12px sans-serif';
+  const padding = 8;
+  const lineH = 16;
+  const width = Math.max(...lines.map((l) => ctx.measureText(l).width)) + padding * 2;
+  const height = lines.length * lineH + padding * 2;
+
+  let x = base.sx + 12;
+  let y = base.sy + 12;
+  if (x + width > canvas.width - 8) x = base.sx - width - 12;
+  if (y + height > canvas.height - 8) y = base.sy - height - 12;
+
+  ctx.fillStyle = 'rgba(5, 12, 28, 0.92)';
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = base.color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, width, height);
+
+  ctx.fillStyle = '#e8f0ff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  lines.forEach((line, idx) => {
+    ctx.fillText(line, x + padding, y + padding + idx * lineH);
+  });
+}
+
 function drawTerritory(territory) {
   const selected = territory.id === state.selectedAttackerId;
 
