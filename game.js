@@ -95,6 +95,15 @@ const STRATEGIC_GROUPS = [
 ];
 
 
+
+
+const WORLD_BG_SOURCES = [
+  'world-background.geojson',
+  'https://unpkg.com/world-atlas@2/countries-110m.geojson',
+  'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.geojson',
+  'https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson'
+];
+
 const state = {
   territories: [],
   territoryMap: new Map(),
@@ -105,7 +114,8 @@ const state = {
   drag: null,
   view: { zoom: 1, panX: 0, panY: 0 },
   worldCircle: null,
-  hoveredBase: null
+  hoveredBase: null,
+  backgroundPolygons: []
 };
 
 init();
@@ -114,6 +124,14 @@ async function init() {
   try {
     const loaded = await loadAnyMap(['countries.geojson']);
     state.territories = loaded;
+
+    const bg = await loadWorldBackgroundGeoJson();
+    if (bg.length) {
+      state.backgroundPolygons = bg;
+      addLog(`Фон мира: загружено полигонов ${bg.length}.`);
+    } else {
+      addLog('Фон мира: используется встроенный контур континентов (fallback).');
+    }
     state.territoryMap.clear();
     state.territories.forEach((territory) => state.territoryMap.set(territory.id, territory));
 
@@ -154,6 +172,38 @@ function fetchWithTimeout(url, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { cache: 'no-cache', signal: controller.signal }).finally(() => clearTimeout(timer));
 }
+
+
+
+async function loadWorldBackgroundGeoJson() {
+  for (const src of WORLD_BG_SOURCES) {
+    try {
+      const response = await fetchWithTimeout(src, 4500);
+      if (!response.ok) continue;
+      const data = await response.json();
+      if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) continue;
+
+      const polys = [];
+      for (const feature of data.features) {
+        const name = normalizeCountryName(feature.properties?.ADMIN || feature.properties?.name || '');
+        if (SELECTED_COUNTRIES.includes(name)) continue;
+        const pset = projectFeatureToWorldPolygons(feature, 1, 140);
+        for (const p of pset) {
+          if (p.length >= 3) polys.push(p);
+        }
+      }
+
+      if (polys.length > 30) {
+        addLog(`Фон мира загружен из ${src}`);
+        return polys;
+      }
+    } catch {
+      // пробуем следующий источник
+    }
+  }
+  return [];
+}
+
 
 function buildTerritoriesFromGeoJson(geojson) {
   const selected = selectWantedFeatures(geojson.features || []);
@@ -208,15 +258,25 @@ function normalizeCountryName(name) {
 }
 
 function projectFeatureToWorldPolygon(feature) {
-  const rings = flattenGeometryRings(feature.geometry);
-  if (!rings.length) return null;
+  const polygons = projectFeatureToWorldPolygons(feature, 1, 50);
+  if (!polygons.length) return null;
+  let best = polygons[0];
+  for (const poly of polygons) {
+    if (polygonArea(poly) > polygonArea(best)) best = poly;
+  }
+  return best;
+}
 
-  let best = null;
+function projectFeatureToWorldPolygons(feature, minPoints = 1, targetStep = 80) {
+  const rings = flattenGeometryRings(feature.geometry);
+  if (!rings.length) return [];
+
+  const out = [];
   for (const ring of rings) {
     const cleaned = ring.filter((coord) => Array.isArray(coord) && coord.length >= 2);
     if (cleaned.length < 4) continue;
 
-    const stride = Math.max(1, Math.floor(cleaned.length / 50));
+    const stride = Math.max(minPoints, Math.floor(cleaned.length / targetStep));
     const points = [];
 
     for (let i = 0; i < cleaned.length; i += stride) {
@@ -226,12 +286,10 @@ function projectFeatureToWorldPolygon(feature) {
     }
 
     const deduped = dedupeSequentialPoints(points);
-    if (deduped.length >= 3 && (!best || polygonArea(deduped) > polygonArea(best))) {
-      best = deduped;
-    }
+    if (deduped.length >= 3) out.push(deduped);
   }
 
-  return best;
+  return out;
 }
 
 function projectLonLatToWorld(latDeg, lonDeg) {
@@ -559,10 +617,11 @@ function drawBackgroundLandmasses() {
   ctx.strokeStyle = 'rgba(154, 182, 224, 0.45)';
   ctx.lineWidth = 1;
 
-  for (const poly of BACKGROUND_LANDMASSES) {
+  const source = state.backgroundPolygons.length ? state.backgroundPolygons : BACKGROUND_LANDMASSES.map((p) => p.map(([lon, lat]) => projectLonLatToWorld(lat, lon)));
+
+  for (const poly of source) {
     ctx.beginPath();
-    poly.forEach(([lon, lat], i) => {
-      const [x, y] = projectLonLatToWorld(lat, lon);
+    poly.forEach(([x, y], i) => {
       const sx = x * state.view.zoom + state.view.panX;
       const sy = y * state.view.zoom + state.view.panY;
       if (i === 0) ctx.moveTo(sx, sy);
